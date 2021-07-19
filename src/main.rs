@@ -272,10 +272,15 @@ impl Generator {
             return Err(eyre::eyre!("no git directory found"));
         }
 
-        Ok(PathBuf::from_str(git_dir)
+        let hook_dir = PathBuf::from_str(git_dir)
             .expect("cannot fail")
-            .join("hooks")
-            .join(stub))
+            .join("hooks");
+        if !hook_dir.is_dir() {
+            debug!("hook dir does not exist, creating");
+            std::fs::create_dir_all(&hook_dir).wrap_err("creating hook directory")?;
+        }
+
+        Ok(hook_dir.join(stub))
     }
 }
 
