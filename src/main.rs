@@ -77,7 +77,10 @@ fn sanitise_name(n: &str) -> String {
 }
 
 fn random_name() -> String {
-    Uuid::new_v4().to_string()
+    Uuid::new_v4()
+        .to_simple()
+        .encode_lower(&mut Uuid::encode_buffer())
+        .to_string()
 }
 
 impl Hook {
@@ -172,12 +175,13 @@ impl Generator {
         debug!("{:?} hook: {}", stage, contents);
 
         if dry_run {
-            eprintln!("would install {} script:", stage);
-            eprintln!("{}", contents);
+            println!("would install {} script:", stage);
+            println!("{}", contents);
         } else {
             let hook_path = self.compute_hook_path(stage);
+            todo!()
         }
-        todo!()
+        Ok(())
     }
 
     fn generate_hook_contents(&self, stage: Stage, hooks: Vec<&'_ Hook>) -> Result<String> {
