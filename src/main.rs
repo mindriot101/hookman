@@ -3,7 +3,9 @@ use eyre::{Result, WrapErr};
 use log::{debug, info, trace};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use structopt::StructOpt;
 use uuid::Uuid;
 
@@ -28,6 +30,8 @@ enum Commands {
         config: String,
         #[structopt(short = "n", long)]
         dry_run: bool,
+        #[structopt(short, long)]
+        force: bool,
     },
 }
 
@@ -90,15 +94,20 @@ impl Hook {
             None => random_name(),
         };
 
-        HookContext {
-            name,
-            command: self.command.clone(),
-        }
+        let command = if self.pass_git_files {
+            format!("{} $(git ls-files)", self.command.clone())
+        } else {
+            self.command.clone()
+        };
+
+        HookContext { name, command }
     }
 }
 
 struct HookContext {
     name: String,
+    // This field is read in the template
+    #[allow(dead_code)]
     command: String,
 }
 
@@ -145,12 +154,12 @@ impl Generator {
         Ok(Self { config })
     }
 
-    fn install(&self, dry_run: bool) -> Result<()> {
+    fn install(&self, dry_run: bool, force: bool) -> Result<()> {
         info!("installing hooks");
         let hooks_per_stage = self.hooks_per_stage();
         debug!("hooks per stage: {:?}", hooks_per_stage);
         for (stage, hooks) in hooks_per_stage {
-            self.generate_hook(stage, hooks, dry_run)
+            self.generate_hook(stage, hooks, dry_run, force)
                 .wrap_err_with(|| format!("generating hook for stage {:?}", stage))?;
         }
         Ok(())
@@ -170,8 +179,9 @@ impl Generator {
         stage: Stage,
         hooks: Vec<&'a Hook>,
         dry_run: bool,
+        force: bool,
     ) -> Result<()> {
-        let contents = self.generate_hook_contents(stage, hooks)?;
+        let contents = self.generate_hook_contents(hooks)?;
         debug!("{:?} hook: {}", stage, contents);
 
         if dry_run {
@@ -179,22 +189,63 @@ impl Generator {
             println!("{}", contents);
         } else {
             let hook_path = self.compute_hook_path(stage);
-            todo!()
+            if hook_path.exists() && !force {
+                return Err(eyre::eyre!(
+                    "file {:?} exists and -f/--force not given",
+                    &hook_path
+                ));
+            }
+            self.write_file(&hook_path, &contents)
+                .wrap_err("writing to file")?;
         }
         Ok(())
     }
 
-    fn generate_hook_contents(&self, stage: Stage, hooks: Vec<&'_ Hook>) -> Result<String> {
+    fn write_file(&self, path: &Path, contents: &str) -> Result<()> {
+        let mut out =
+            std::fs::File::create(path).wrap_err_with(|| format!("creating file {:?}", path))?;
+        write!(&mut out, "{}", contents).wrap_err("writing file contents")?;
+
+        self.make_executable(out)
+            .wrap_err("making file executable")?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn make_executable(&self, f: std::fs::File) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let meta = f.metadata().wrap_err("fetching file metadata")?;
+        let mut permissions = meta.permissions();
+        let current_mode = permissions.mode();
+        let new_mode = current_mode | 0o111;
+        permissions.set_mode(new_mode);
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(&self, _f: std::fs::File) -> Result<()> {
+        todo!("make_executable on non-unix")
+    }
+
+    fn generate_hook_contents(&self, hooks: Vec<&'_ Hook>) -> Result<String> {
         let hook_contexts = hooks.iter().map(|h| h.context()).collect::<Vec<_>>();
         let template = HookTemplate::from(hook_contexts);
         template.render().wrap_err("generating template")
     }
 
     fn compute_hook_path(&self, stage: Stage) -> PathBuf {
-        todo!("compute_hook_path")
-        // match stage {
-        //     Stage::PrePush => PathBuf,
-        // }
+        let stub = match stage {
+            Stage::PrePush => "pre-push",
+            Stage::PostCommit => "post-commit",
+            Stage::PreCommit => "pre-commit",
+        };
+        // TODO: find the git root path
+        PathBuf::from_str(".")
+            .expect("cannot fail")
+            .join(".git")
+            .join("hooks")
+            .join(stub)
     }
 }
 
@@ -203,17 +254,20 @@ struct Context {}
 
 fn main() -> Result<()> {
     env_logger::init();
+    color_eyre::install()?;
+
     let opts = Commands::from_args();
     debug!("options: {:?}", opts);
     match opts {
         Commands::Install {
             config: config_path,
-            dry_run: dry_run,
+            dry_run,
+            force,
         } => {
             let config = ConfigLocation::from_path(config_path)?;
             let generator = Generator::new(config).unwrap();
             generator
-                .install(dry_run)
+                .install(dry_run, force)
                 .wrap_err("generating configuration")?;
         }
     }
@@ -260,5 +314,33 @@ mod tests {
                 }
             ],
         );
+    }
+
+    #[test]
+    fn compute_hook_path() {
+        let config = ConfigLocation {
+            config: Config { hooks: Vec::new() },
+            path: PathBuf::from_str("").unwrap(),
+        };
+        let generator = Generator::new(config).unwrap();
+
+        let examples = &[
+            (
+                Stage::PreCommit,
+                PathBuf::from_str("./.git/hooks/pre-commit").unwrap(),
+            ),
+            (
+                Stage::PrePush,
+                PathBuf::from_str("./.git/hooks/pre-push").unwrap(),
+            ),
+            (
+                Stage::PostCommit,
+                PathBuf::from_str("./.git/hooks/post-commit").unwrap(),
+            ),
+        ];
+
+        for (stage, expected) in examples {
+            assert_eq!(generator.compute_hook_path(*stage), *expected);
+        }
     }
 }

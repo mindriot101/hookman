@@ -4,12 +4,14 @@ set -euo pipefail
 
 {% for hook in hooks %}
 {{ hook.name }}() {
-    true
+    {{ hook.command }}
 }
 {% endfor %}
 
 main() {
-    true
+    {% for hook in hooks %}
+    {{ hook.name }}
+    {% endfor %}
 }
 
 main
