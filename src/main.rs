@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process;
 use std::str::FromStr;
 use structopt::StructOpt;
 use uuid::Uuid;
@@ -197,7 +198,8 @@ impl Generator {
             println!("would install {} script:", stage);
             println!("{}", contents);
         } else {
-            let hook_path = self.compute_hook_path(stage);
+            let hook_path = self.compute_hook_path(stage)?;
+            debug!("writing hook to {:?}", hook_path);
             if hook_path.exists() && !force {
                 return Err(eyre::eyre!(
                     "file {:?} exists and -f/--force not given",
@@ -243,18 +245,33 @@ impl Generator {
         template.render().wrap_err("generating template")
     }
 
-    fn compute_hook_path(&self, stage: Stage) -> PathBuf {
+    fn compute_hook_path(&self, stage: Stage) -> Result<PathBuf> {
         let stub = match stage {
             Stage::PrePush => "pre-push",
             Stage::PostCommit => "post-commit",
             Stage::PreCommit => "pre-commit",
         };
-        // TODO: find the git root path
-        PathBuf::from_str(".")
+
+        // Use git to find the root directory
+        let output = process::Command::new("git")
+            .args(&["rev-parse", "--git-dir"])
+            .output()
+            .wrap_err("spawning git command")?;
+
+        if !output.status.success() {
+            let stderr =
+                std::str::from_utf8(&output.stderr).expect("reading command output as utf-8");
+            return Err(eyre::eyre!("error running git: {}", stderr));
+        }
+
+        let git_dir = std::str::from_utf8(&output.stdout)
+            .expect("reading command output as utf-8")
+            .trim();
+
+        Ok(PathBuf::from_str(git_dir)
             .expect("cannot fail")
-            .join(".git")
             .join("hooks")
-            .join(stub)
+            .join(stub))
     }
 }
 
@@ -336,20 +353,20 @@ mod tests {
         let examples = &[
             (
                 Stage::PreCommit,
-                PathBuf::from_str("./.git/hooks/pre-commit").unwrap(),
+                PathBuf::from_str(".git/hooks/pre-commit").unwrap(),
             ),
             (
                 Stage::PrePush,
-                PathBuf::from_str("./.git/hooks/pre-push").unwrap(),
+                PathBuf::from_str(".git/hooks/pre-push").unwrap(),
             ),
             (
                 Stage::PostCommit,
-                PathBuf::from_str("./.git/hooks/post-commit").unwrap(),
+                PathBuf::from_str(".git/hooks/post-commit").unwrap(),
             ),
         ];
 
         for (stage, expected) in examples {
-            assert_eq!(generator.compute_hook_path(*stage), *expected);
+            assert_eq!(generator.compute_hook_path(*stage).unwrap(), *expected);
         }
     }
 }
