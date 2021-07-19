@@ -10,7 +10,11 @@ set -euo pipefail
 
 main() {
     {% for hook in hooks %}
+    {% if hook.background %}
+    {{ hook.name }} &
+    {% else %}
     {{ hook.name }}
+    {% endif %}
     {% endfor %}
 }
 

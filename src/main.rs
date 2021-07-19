@@ -100,7 +100,11 @@ impl Hook {
             self.command.clone()
         };
 
-        HookContext { name, command }
+        HookContext {
+            name,
+            command,
+            background: self.background,
+        }
     }
 }
 
@@ -109,6 +113,7 @@ struct HookContext {
     // This field is read in the template
     #[allow(dead_code)]
     command: String,
+    background: bool,
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug)]
