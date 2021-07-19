@@ -7,9 +7,10 @@ stage = "pre-push"
 
 [[hooks]]
 name = "Generate hooks"
-command = "ctags --tag-relative-yes -Rf.git/tags.$$ $(git ls-files)"
+command = "ctags --tag-relative-yes -Rf.git/tags.$$"
 background = true
 stage = "post-commit"
+pass_git_files = true
 
 [[hooks]]
 name = "Lint"

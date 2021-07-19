@@ -1,8 +1,17 @@
+use askama::Template;
 use eyre::{Result, WrapErr};
 use log::{debug, info, trace};
-use serde::Deserialize;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use structopt::StructOpt;
+
+#[derive(Template)]
+#[template(path = "hook.sh", escape = "none")]
+struct HookTemplate {
+    name: Option<String>,
+    command: String,
+}
 
 #[derive(Debug, StructOpt)]
 enum Commands {
@@ -11,10 +20,12 @@ enum Commands {
         /// Path of the configuration file.
         #[structopt(short, long, default_value = ".hookman.toml")]
         config: String,
+        #[structopt(short = "n", long)]
+        dry_run: bool,
     },
 }
 
-#[derive(Deserialize, PartialEq, Eq, Debug)]
+#[derive(Deserialize, PartialEq, Eq, Debug, Hash, Clone, Copy)]
 enum Stage {
     #[serde(rename = "pre-push")]
     PrePush,
@@ -38,6 +49,17 @@ struct Hook {
     stage: Stage,
     #[serde(default)]
     background: bool,
+    #[serde(default)]
+    pass_git_files: bool,
+}
+
+impl From<Hook> for HookTemplate {
+    fn from(hook: Hook) -> HookTemplate {
+        HookTemplate {
+            name: hook.name.clone(),
+            command: hook.command.clone(),
+        }
+    }
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug)]
@@ -46,8 +68,7 @@ struct Config {
 }
 
 impl Config {
-    fn from_path(p: impl AsRef<Path>) -> Result<Self> {
-        let p = p.as_ref();
+    fn from_path<'a>(p: &'a Path) -> Result<Self> {
         info!("reading configuration from {:?}", p);
         let s = std::fs::read_to_string(p).wrap_err("reading config file")?;
         trace!("config: {}", s);
@@ -57,10 +78,108 @@ impl Config {
     }
 }
 
-fn main() {
+#[derive(PartialEq, Eq, Debug)]
+struct ConfigLocation {
+    config: Config,
+    path: PathBuf,
+}
+
+impl ConfigLocation {
+    fn from_path(p: impl AsRef<Path>) -> Result<Self> {
+        let p = p.as_ref();
+        let config = Config::from_path(p)?;
+        Ok(Self {
+            config,
+            path: p.into(),
+        })
+    }
+}
+
+struct Generator {
+    config: ConfigLocation,
+}
+
+impl Generator {
+    fn new(config: ConfigLocation) -> Result<Self> {
+        // can we make this a lazy static?
+        Ok(Self { config })
+    }
+
+    fn install(&self, dry_run: bool) -> Result<()> {
+        info!("installing hooks");
+        let hooks_per_stage = self.hooks_per_stage();
+        debug!("hooks per stage: {:?}", hooks_per_stage);
+        for (stage, hooks) in hooks_per_stage {
+            self.generate_hook(stage, hooks, dry_run)
+                .wrap_err_with(|| format!("generating hook for stage {:?}", stage))?;
+        }
+        Ok(())
+    }
+
+    fn hooks_per_stage<'a>(&'a self) -> HashMap<Stage, Vec<&'a Hook>> {
+        let mut out = HashMap::new();
+        for hook in &self.config.config.hooks {
+            let entry = out.entry(hook.stage).or_insert_with(|| Vec::new());
+            entry.push(hook);
+        }
+        out
+    }
+
+    fn generate_hook<'a>(
+        &'a self,
+        stage: Stage,
+        hooks: Vec<&'a Hook>,
+        dry_run: bool,
+    ) -> Result<()> {
+        let combined_hook = self.combine_hooks(hooks);
+        let contents = self.generate_hook_contents(stage, combined_hook)?;
+        debug!("{:?} hook: {}", stage, contents);
+
+        let hook_path = self.compute_hook_path(stage);
+
+        if dry_run {
+        } else {
+        }
+        todo!()
+    }
+
+    fn generate_hook_contents(&self, stage: Stage, hook: Hook) -> Result<String> {
+        let template: HookTemplate = hook.into();
+        template.render().wrap_err("generating template")
+    }
+
+    fn combine_hooks<'a>(&self, hooks: Vec<&'a Hook>) -> Hook {
+        todo!()
+    }
+
+    fn compute_hook_path(&self, stage: Stage) -> PathBuf {
+        todo!("compute_hook_path")
+        // match stage {
+        //     Stage::PrePush => PathBuf,
+        // }
+    }
+}
+
+#[derive(Serialize)]
+struct Context {}
+
+fn main() -> Result<()> {
     env_logger::init();
     let opts = Commands::from_args();
     debug!("options: {:?}", opts);
+    match opts {
+        Commands::Install {
+            config: config_path,
+            dry_run: dry_run,
+        } => {
+            let config = ConfigLocation::from_path(config_path)?;
+            let generator = Generator::new(config).unwrap();
+            generator
+                .install(dry_run)
+                .wrap_err("generating configuration")?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -75,30 +194,31 @@ mod tests {
     fn parse_config() {
         init_logger();
         let path = "share/hookman.toml";
-        let config = Config::from_path(path).unwrap();
-
-        assert_eq!(config.hooks.len(), 3);
+        let config = ConfigLocation::from_path(path).unwrap();
 
         assert_eq!(
-            config.hooks,
+            config.config.hooks,
             vec![
                 Hook {
                     name: Some("Test".to_string()),
                     command: "pytest".to_string(),
                     stage: Stage::PrePush,
                     background: false,
+                    pass_git_files: false,
                 },
                 Hook {
                     name: Some("Generate hooks".to_string()),
-                    command: "ctags --tag-relative-yes -Rf.git/tags.$$ $(git ls-files)".to_string(),
+                    command: "ctags --tag-relative-yes -Rf.git/tags.$$".to_string(),
                     background: true,
                     stage: Stage::PostCommit,
+                    pass_git_files: true,
                 },
                 Hook {
                     name: Some("Lint".to_string()),
                     command: "pylint".to_string(),
                     background: false,
                     stage: Stage::PreCommit,
+                    pass_git_files: false,
                 }
             ],
         );
