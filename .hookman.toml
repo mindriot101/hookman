@@ -11,7 +11,6 @@ command = "cargo clippy -- -D warnings"
 stage = "pre-push"
 
 [[hooks]]
-name = "Generate hooks"
 command = """
 dir="$(git rev-parse --git-dir)"
 trap 'rm -f "$dir/tags.$$"' EXIT INT TERM
