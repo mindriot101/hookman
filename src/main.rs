@@ -5,12 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
+use uuid::Uuid;
 
 #[derive(Template)]
 #[template(path = "hook.sh", escape = "none")]
 struct HookTemplate {
-    name: Option<String>,
-    command: String,
+    hooks: Vec<HookContext>,
+}
+
+impl<'a> From<Vec<HookContext>> for HookTemplate {
+    fn from(hooks: Vec<HookContext>) -> HookTemplate {
+        HookTemplate { hooks }
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -41,6 +47,16 @@ impl Default for Stage {
     }
 }
 
+impl std::fmt::Display for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            Stage::PrePush => f.write_str("pre-push"),
+            Stage::PostCommit => f.write_str("post-commit"),
+            Stage::PreCommit => f.write_str("pre-commit"),
+        }
+    }
+}
+
 #[derive(Deserialize, PartialEq, Eq, Debug)]
 struct Hook {
     name: Option<String>,
@@ -53,13 +69,34 @@ struct Hook {
     pass_git_files: bool,
 }
 
-impl From<Hook> for HookTemplate {
-    fn from(hook: Hook) -> HookTemplate {
-        HookTemplate {
-            name: hook.name.clone(),
-            command: hook.command.clone(),
+fn sanitise_name(n: &str) -> String {
+    n.to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+fn random_name() -> String {
+    Uuid::new_v4().to_string()
+}
+
+impl Hook {
+    fn context(&self) -> HookContext {
+        let name = match &self.name {
+            Some(n) => sanitise_name(n),
+            None => random_name(),
+        };
+
+        HookContext {
+            name,
+            command: self.command.clone(),
         }
     }
+}
+
+struct HookContext {
+    name: String,
+    command: String,
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug)]
@@ -131,25 +168,22 @@ impl Generator {
         hooks: Vec<&'a Hook>,
         dry_run: bool,
     ) -> Result<()> {
-        let combined_hook = self.combine_hooks(hooks);
-        let contents = self.generate_hook_contents(stage, combined_hook)?;
+        let contents = self.generate_hook_contents(stage, hooks)?;
         debug!("{:?} hook: {}", stage, contents);
 
-        let hook_path = self.compute_hook_path(stage);
-
         if dry_run {
+            eprintln!("would install {} script:", stage);
+            eprintln!("{}", contents);
         } else {
+            let hook_path = self.compute_hook_path(stage);
         }
         todo!()
     }
 
-    fn generate_hook_contents(&self, stage: Stage, hook: Hook) -> Result<String> {
-        let template: HookTemplate = hook.into();
+    fn generate_hook_contents(&self, stage: Stage, hooks: Vec<&'_ Hook>) -> Result<String> {
+        let hook_contexts = hooks.iter().map(|h| h.context()).collect::<Vec<_>>();
+        let template = HookTemplate::from(hook_contexts);
         template.render().wrap_err("generating template")
-    }
-
-    fn combine_hooks<'a>(&self, hooks: Vec<&'a Hook>) -> Hook {
-        todo!()
     }
 
     fn compute_hook_path(&self, stage: Stage) -> PathBuf {
