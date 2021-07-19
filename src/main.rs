@@ -126,7 +126,7 @@ struct Config {
 }
 
 impl Config {
-    fn from_path<'a>(p: &'a Path) -> Result<Self> {
+    fn from_path(p: &'_ Path) -> Result<Self> {
         info!("reading configuration from {:?}", p);
         let s = std::fs::read_to_string(p).wrap_err("reading config file")?;
         trace!("config: {}", s);
@@ -174,10 +174,10 @@ impl Generator {
         Ok(())
     }
 
-    fn hooks_per_stage<'a>(&'a self) -> HashMap<Stage, Vec<&'a Hook>> {
+    fn hooks_per_stage(&self) -> HashMap<Stage, Vec<&'_ Hook>> {
         let mut out = HashMap::new();
         for hook in &self.config.config.hooks {
-            let entry = out.entry(hook.stage).or_insert_with(|| Vec::new());
+            let entry = out.entry(hook.stage).or_insert_with(Vec::new);
             entry.push(hook);
         }
         out
