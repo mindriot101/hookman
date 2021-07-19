@@ -6,6 +6,11 @@ command = "cargo test"
 stage = "pre-push"
 
 [[hooks]]
+name = "Clippy"
+command = "cargo clippy -- -D warnings"
+stage = "pre-push"
+
+[[hooks]]
 name = "Generate hooks"
 command = """
 dir="$(git rev-parse --git-dir)"

@@ -102,6 +102,7 @@ impl Hook {
 
         HookContext {
             name,
+            original_name: self.name.clone(),
             command,
             background: self.background,
         }
@@ -110,6 +111,9 @@ impl Hook {
 
 struct HookContext {
     name: String,
+    // This field is read in the template
+    #[allow(dead_code)]
+    original_name: Option<String>,
     // This field is read in the template
     #[allow(dead_code)]
     command: String,
