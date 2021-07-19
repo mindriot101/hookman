@@ -268,6 +268,10 @@ impl Generator {
             .expect("reading command output as utf-8")
             .trim();
 
+        if git_dir.is_empty() {
+            return Err(eyre::eyre!("no git directory found"));
+        }
+
         Ok(PathBuf::from_str(git_dir)
             .expect("cannot fail")
             .join("hooks")
