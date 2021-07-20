@@ -1,0 +1,41 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        
+    - name: Build
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --release --all-features
+        
+    - name: Run clippy
+      uses: actions-rs/clippy-check@v1.0.7
+      
+    - name: Run tests
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        
+    - name: Run cargo bloat
+      uses: orf/cargo-bloat-action@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
