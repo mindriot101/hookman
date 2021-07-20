@@ -3,12 +3,12 @@
 [[hooks]]
 name = "Test"
 command = "cargo test"
-stage = "pre-push"
+stage = "pre-commit"
 
 [[hooks]]
 name = "Clippy"
 command = "cargo clippy -- -D warnings"
-stage = "pre-push"
+stage = "pre-commit"
 
 # XXX read from global configuration
 # [[hooks]]

@@ -241,30 +241,18 @@ impl Generator {
     }
 
     fn write_file(&self, path: &Path, contents: &str) -> Result<()> {
-        let mut out =
-            std::fs::File::create(path).wrap_err_with(|| format!("creating file {:?}", path))?;
+        // TODO(srw): how to do this on not(unix)?
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut out = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .mode(0o770)
+            .open(path)
+            .wrap_err_with(|| format!("creating file {:?}", path))?;
         write!(&mut out, "{}", contents).wrap_err("writing file contents")?;
 
-        self.make_executable(out)
-            .wrap_err("making file executable")?;
         Ok(())
-    }
-
-    #[cfg(unix)]
-    fn make_executable(&self, f: std::fs::File) -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let meta = f.metadata().wrap_err("fetching file metadata")?;
-        let mut permissions = meta.permissions();
-        let current_mode = permissions.mode();
-        let new_mode = current_mode | 0o111;
-        permissions.set_mode(new_mode);
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    fn make_executable(&self, _f: std::fs::File) -> Result<()> {
-        todo!("make_executable on non-unix")
     }
 
     fn generate_hook_contents(&mut self, hooks: Vec<Hook>) -> Result<String> {
@@ -395,11 +383,8 @@ mod tests {
 
     #[test]
     fn compute_hook_path() {
-        let config = ConfigLocation {
-            config: Config { hooks: Vec::new() },
-            path: PathBuf::from_str("").unwrap(),
-        };
-        let generator = Generator::new(config).unwrap();
+        init_logger();
+        let generator = empty_generator();
 
         let examples = &[
             (
@@ -423,6 +408,7 @@ mod tests {
 
     #[test]
     fn name_gen() {
+        init_logger();
         let mut n = NameGen::new();
         for _ in 0..10 {
             let _ = n.generate();
@@ -431,5 +417,32 @@ mod tests {
         let res = n.generate();
 
         assert_eq!(res, "hook_10");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creating_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        init_logger();
+        let generator = empty_generator();
+
+        let tdir = tempfile::tempdir().unwrap();
+        let file_path = tdir.path().join("example.txt");
+
+        generator.write_file(&file_path, "abc").unwrap();
+
+        // check the file mode
+        let mode = file_path.metadata().unwrap().mode();
+        assert!(mode & 0o100 > 0, "checking 100, mode: {:o}", mode);
+        assert!(mode & 0o010 > 0, "checking 010, mode: {:o}", mode);
+    }
+
+    fn empty_generator() -> Generator {
+        let config = ConfigLocation {
+            config: Config { hooks: Vec::new() },
+            path: PathBuf::from_str("").unwrap(),
+        };
+        Generator::new(config).unwrap()
     }
 }
