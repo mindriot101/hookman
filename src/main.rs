@@ -129,7 +129,7 @@ struct HookContext {
     background: bool,
 }
 
-#[derive(Deserialize, PartialEq, Eq, Debug)]
+#[derive(Deserialize, PartialEq, Eq, Debug, Clone)]
 struct Config {
     hooks: Vec<Hook>,
 }
@@ -145,7 +145,7 @@ impl Config {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 struct ConfigLocation {
     config: Config,
     path: PathBuf,
@@ -154,11 +154,30 @@ struct ConfigLocation {
 impl ConfigLocation {
     fn from_path(p: impl AsRef<Path>) -> Result<Self> {
         let p = p.as_ref();
+        debug!("trying to load configuration from {:?}", p);
         let config = Config::from_path(p)?;
         Ok(Self {
             config,
             path: p.into(),
         })
+    }
+
+    fn global() -> Result<Self> {
+        let config_path = match dirs::config_dir() {
+            Some(d) => Ok(d.join("hookman").join("hookman.toml")),
+            None => Err(eyre::eyre!("cannot find global config file")),
+        }?;
+
+        Self::from_path(config_path)
+    }
+
+    fn merge(&self, other: &ConfigLocation) -> Self {
+        let mut out = self.clone();
+        // XXX(srw) why does `extend` not work?
+        for hook in &other.config.hooks {
+            out.config.hooks.push(hook.clone());
+        }
+        out
     }
 }
 
@@ -312,6 +331,17 @@ fn main() -> Result<()> {
             force,
         } => {
             let config = ConfigLocation::from_path(config_path)?;
+            let config = match ConfigLocation::global() {
+                Ok(global_config) => {
+                    debug!("found global configuration");
+                    global_config.merge(&config)
+                }
+                Err(_) => {
+                    debug!("no global configuration found");
+                    config
+                }
+            };
+
             let mut generator = Generator::new(config).unwrap();
             generator
                 .install(dry_run, force)
