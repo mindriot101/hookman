@@ -372,15 +372,16 @@ fn main() -> Result<()> {
             force,
             no_remove,
         } => {
-            let config = ConfigLocation::from_path(config_path)?;
-            let config = match ConfigLocation::global() {
-                Ok(global_config) => {
-                    debug!("found global configuration");
-                    global_config.merge(&config)
-                }
-                Err(_) => {
-                    debug!("no global configuration found");
-                    config
+            let config = match (
+                ConfigLocation::from_path(config_path),
+                ConfigLocation::global(),
+            ) {
+                (Ok(local_config), Ok(global_config)) => global_config.merge(&local_config),
+                (Ok(local_config), Err(_)) => local_config,
+                (Err(_), Ok(global_config)) => global_config,
+                (Err(_), Err(_)) => {
+                    warn!("no configuration files found");
+                    return Ok(());
                 }
             };
 
