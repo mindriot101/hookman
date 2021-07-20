@@ -1,6 +1,6 @@
 use askama::Template;
 use eyre::{Result, WrapErr};
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -48,6 +48,8 @@ enum Commands {
         dry_run: bool,
         #[structopt(short, long)]
         force: bool,
+        #[structopt(long = "no-remove")]
+        no_remove: bool,
     },
 }
 
@@ -192,15 +194,83 @@ impl Generator {
         Ok(Self { config, name_gen })
     }
 
-    fn install(&mut self, dry_run: bool, force: bool) -> Result<()> {
+    fn install(&mut self, dry_run: bool, force: bool, no_remove: bool) -> Result<()> {
+        let hook_root_path = self
+            .compute_root_hook_path()
+            .wrap_err("calculating root hook path")?;
+
+        if !no_remove {
+            self.clear_hooks(&hook_root_path)
+                .wrap_err("clearing existing hooks")?;
+        }
         info!("installing hooks");
         let hooks_per_stage = self.hooks_per_stage();
         debug!("hooks per stage: {:?}", hooks_per_stage);
         for (stage, hooks) in hooks_per_stage {
-            self.generate_hook(stage, hooks, dry_run, force)
+            self.generate_hook(stage, hooks, &hook_root_path, dry_run, force)
                 .wrap_err_with(|| format!("generating hook for stage {:?}", stage))?;
         }
         Ok(())
+    }
+
+    fn clear_hooks(&self, hook_root_path: &Path) -> Result<()> {
+        info!("clearing out previous hooks");
+        let mut remove_candidates = Vec::new();
+        match hook_root_path.read_dir() {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry.wrap_err("error reading directory entry")?;
+                    if entry.file_type()?.is_file() {
+                        remove_candidates.push(hook_root_path.join(entry.file_name()));
+                    }
+                }
+            }
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    info!("no hook directory found");
+                    return Ok(());
+                }
+                _ => {
+                    warn!("error reading hook directory: {:?}", e);
+                    return Ok(());
+                }
+            },
+        }
+
+        for candidate in &remove_candidates {
+            std::fs::remove_file(candidate)
+                .wrap_err_with(|| format!("removing file {:?}", candidate))?;
+        }
+
+        Ok(())
+    }
+
+    fn compute_root_hook_path(&self) -> Result<PathBuf> {
+        // Use git to find the root directory
+        let output = process::Command::new("git")
+            .args(&["rev-parse", "--git-dir"])
+            .output()
+            .wrap_err("spawning git command")?;
+
+        if !output.status.success() {
+            let stderr =
+                std::str::from_utf8(&output.stderr).expect("reading command output as utf-8");
+            return Err(eyre::eyre!("error running git: {}", stderr));
+        }
+
+        let git_dir = std::str::from_utf8(&output.stdout)
+            .expect("reading command output as utf-8")
+            .trim();
+
+        if git_dir.is_empty() {
+            return Err(eyre::eyre!("no git directory found"));
+        }
+
+        let hook_dir = PathBuf::from_str(git_dir)
+            .expect("cannot fail")
+            .join("hooks");
+
+        Ok(hook_dir)
     }
 
     fn hooks_per_stage(&self) -> HashMap<Stage, Vec<Hook>> {
@@ -216,6 +286,7 @@ impl Generator {
         &mut self,
         stage: Stage,
         hooks: Vec<Hook>,
+        hook_root_path: &Path,
         dry_run: bool,
         force: bool,
     ) -> Result<()> {
@@ -226,7 +297,7 @@ impl Generator {
             println!("would install {} script:", stage);
             println!("{}", contents);
         } else {
-            let hook_path = self.compute_hook_path(stage)?;
+            let hook_path = self.compute_hook_path(hook_root_path, stage)?;
             debug!("writing hook to {:?}", hook_path);
             if hook_path.exists() && !force {
                 return Err(eyre::eyre!(
@@ -264,42 +335,19 @@ impl Generator {
         template.render().wrap_err("generating template")
     }
 
-    fn compute_hook_path(&self, stage: Stage) -> Result<PathBuf> {
+    fn compute_hook_path(&self, hook_root_path: &Path, stage: Stage) -> Result<PathBuf> {
         let stub = match stage {
             Stage::PrePush => "pre-push",
             Stage::PostCommit => "post-commit",
             Stage::PreCommit => "pre-commit",
         };
 
-        // Use git to find the root directory
-        let output = process::Command::new("git")
-            .args(&["rev-parse", "--git-dir"])
-            .output()
-            .wrap_err("spawning git command")?;
-
-        if !output.status.success() {
-            let stderr =
-                std::str::from_utf8(&output.stderr).expect("reading command output as utf-8");
-            return Err(eyre::eyre!("error running git: {}", stderr));
-        }
-
-        let git_dir = std::str::from_utf8(&output.stdout)
-            .expect("reading command output as utf-8")
-            .trim();
-
-        if git_dir.is_empty() {
-            return Err(eyre::eyre!("no git directory found"));
-        }
-
-        let hook_dir = PathBuf::from_str(git_dir)
-            .expect("cannot fail")
-            .join("hooks");
-        if !hook_dir.is_dir() {
+        if !hook_root_path.is_dir() {
             debug!("hook dir does not exist, creating");
-            std::fs::create_dir_all(&hook_dir).wrap_err("creating hook directory")?;
+            std::fs::create_dir_all(&hook_root_path).wrap_err("creating hook directory")?;
         }
 
-        Ok(hook_dir.join(stub))
+        Ok(hook_root_path.join(stub))
     }
 }
 
@@ -317,6 +365,7 @@ fn main() -> Result<()> {
             config: config_path,
             dry_run,
             force,
+            no_remove,
         } => {
             let config = ConfigLocation::from_path(config_path)?;
             let config = match ConfigLocation::global() {
@@ -331,8 +380,9 @@ fn main() -> Result<()> {
             };
 
             let mut generator = Generator::new(config).unwrap();
+            // XXX should removal be handled elsewhere?
             generator
-                .install(dry_run, force)
+                .install(dry_run, force, no_remove)
                 .wrap_err("generating configuration")?;
         }
     }
@@ -401,8 +451,15 @@ mod tests {
             ),
         ];
 
+        let hook_root_path = PathBuf::from_str(".git/hooks").unwrap();
+
         for (stage, expected) in examples {
-            assert_eq!(generator.compute_hook_path(*stage).unwrap(), *expected);
+            assert_eq!(
+                generator
+                    .compute_hook_path(&hook_root_path, *stage)
+                    .unwrap(),
+                *expected
+            );
         }
     }
 
