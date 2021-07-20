@@ -51,6 +51,8 @@ enum Commands {
         #[structopt(long = "no-remove")]
         no_remove: bool,
     },
+    /// Generate an example configuration file to the console
+    Example,
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug, Hash, Clone, Copy)]
@@ -388,6 +390,10 @@ fn main() -> Result<()> {
                 .install(dry_run, force, no_remove)
                 .wrap_err("generating configuration")?;
         }
+        Commands::Example => {
+            let text = include_str!("../share/hookman.toml");
+            println!("{}", text);
+        }
     }
     Ok(())
 }
@@ -418,10 +424,10 @@ mod tests {
                 },
                 Hook {
                     name: Some("Generate hooks".to_string()),
-                    command: "ctags --tag-relative-yes -Rf.git/tags.$$".to_string(),
+                    command: "ctags --tag-relative-yes -Rf.git/tags.$$ $(git ls-files)".to_string(),
                     background: true,
                     stage: Stage::PostCommit,
-                    pass_git_files: true,
+                    pass_git_files: false,
                 },
                 Hook {
                     name: Some("Lint".to_string()),
