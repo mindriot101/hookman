@@ -27,3 +27,8 @@ command = "pylint"
 ```
 
 Then run `hookman install`. When you change your configuration, run `hookman install` again.
+
+## Global configuration
+
+If the file `~/.config/hookman/hookman.toml` (on Linux), or `~/Library/Application Support/hookman/hookman.toml` is
+present, then configuration is read from this, and any local configuration is merged in.
