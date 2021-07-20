@@ -202,7 +202,10 @@ impl Generator {
         if !no_remove {
             self.clear_hooks(&hook_root_path)
                 .wrap_err("clearing existing hooks")?;
+        } else {
+            info!("not removing existing hooks because --no-remove was passed");
         }
+
         info!("installing hooks");
         let hooks_per_stage = self.hooks_per_stage();
         debug!("hooks per stage: {:?}", hooks_per_stage);
