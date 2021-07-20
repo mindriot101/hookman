@@ -36,8 +36,9 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: test
-        
-    - name: Run cargo bloat
-      uses: orf/cargo-bloat-action@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+   
+    # This currently does not work, why: TBD
+#     - name: Run cargo bloat
+#       uses: orf/cargo-bloat-action@v1
+#       with:
+#         token: ${{ secrets.GITHUB_TOKEN }}
