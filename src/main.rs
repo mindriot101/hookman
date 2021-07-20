@@ -8,7 +8,22 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 use structopt::StructOpt;
-use uuid::Uuid;
+
+struct NameGen {
+    i: usize,
+}
+
+impl NameGen {
+    const fn new() -> Self {
+        Self { i: 0 }
+    }
+
+    fn generate(&mut self) -> String {
+        let new_name = format!("hook_{}", self.i);
+        self.i += 1;
+        new_name
+    }
+}
 
 #[derive(Template)]
 #[template(path = "hook.sh", escape = "none")]
@@ -62,7 +77,7 @@ impl std::fmt::Display for Stage {
     }
 }
 
-#[derive(Deserialize, PartialEq, Eq, Debug)]
+#[derive(Deserialize, PartialEq, Eq, Debug, Clone)]
 struct Hook {
     name: Option<String>,
     command: String,
@@ -81,18 +96,11 @@ fn sanitise_name(n: &str) -> String {
         .join("_")
 }
 
-fn random_name() -> String {
-    Uuid::new_v4()
-        .to_simple()
-        .encode_lower(&mut Uuid::encode_buffer())
-        .to_string()
-}
-
 impl Hook {
-    fn context(&self) -> HookContext {
+    fn context(&self, name_gen: &mut NameGen) -> HookContext {
         let name = match &self.name {
             Some(n) => sanitise_name(n),
-            None => random_name(),
+            None => name_gen.generate(),
         };
 
         let command = if self.pass_git_files {
@@ -156,15 +164,16 @@ impl ConfigLocation {
 
 struct Generator {
     config: ConfigLocation,
+    name_gen: NameGen,
 }
 
 impl Generator {
     fn new(config: ConfigLocation) -> Result<Self> {
-        // can we make this a lazy static?
-        Ok(Self { config })
+        let name_gen = NameGen::new();
+        Ok(Self { config, name_gen })
     }
 
-    fn install(&self, dry_run: bool, force: bool) -> Result<()> {
+    fn install(&mut self, dry_run: bool, force: bool) -> Result<()> {
         info!("installing hooks");
         let hooks_per_stage = self.hooks_per_stage();
         debug!("hooks per stage: {:?}", hooks_per_stage);
@@ -175,19 +184,19 @@ impl Generator {
         Ok(())
     }
 
-    fn hooks_per_stage(&self) -> HashMap<Stage, Vec<&'_ Hook>> {
+    fn hooks_per_stage(&self) -> HashMap<Stage, Vec<Hook>> {
         let mut out = HashMap::new();
         for hook in &self.config.config.hooks {
             let entry = out.entry(hook.stage).or_insert_with(Vec::new);
-            entry.push(hook);
+            entry.push(hook.clone());
         }
         out
     }
 
-    fn generate_hook<'a>(
-        &'a self,
+    fn generate_hook(
+        &mut self,
         stage: Stage,
-        hooks: Vec<&'a Hook>,
+        hooks: Vec<Hook>,
         dry_run: bool,
         force: bool,
     ) -> Result<()> {
@@ -239,8 +248,11 @@ impl Generator {
         todo!("make_executable on non-unix")
     }
 
-    fn generate_hook_contents(&self, hooks: Vec<&'_ Hook>) -> Result<String> {
-        let hook_contexts = hooks.iter().map(|h| h.context()).collect::<Vec<_>>();
+    fn generate_hook_contents(&mut self, hooks: Vec<Hook>) -> Result<String> {
+        let hook_contexts = hooks
+            .iter()
+            .map(|h| h.context(&mut self.name_gen))
+            .collect::<Vec<_>>();
         let template = HookTemplate::from(hook_contexts);
         template.render().wrap_err("generating template")
     }
@@ -300,7 +312,7 @@ fn main() -> Result<()> {
             force,
         } => {
             let config = ConfigLocation::from_path(config_path)?;
-            let generator = Generator::new(config).unwrap();
+            let mut generator = Generator::new(config).unwrap();
             generator
                 .install(dry_run, force)
                 .wrap_err("generating configuration")?;
@@ -377,5 +389,17 @@ mod tests {
         for (stage, expected) in examples {
             assert_eq!(generator.compute_hook_path(*stage).unwrap(), *expected);
         }
+    }
+
+    #[test]
+    fn name_gen() {
+        let mut n = NameGen::new();
+        for _ in 0..10 {
+            let _ = n.generate();
+        }
+
+        let res = n.generate();
+
+        assert_eq!(res, "hook_10");
     }
 }
