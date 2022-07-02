@@ -1,5 +1,7 @@
 # Hookman
 
+**ARCHIVED** This project has been archived since I am using [pre-commit](https://pre-commit.com) instead. Apologies for any inconvenience.
+
 This project helps manage git hooks.
 
 ## Usage
